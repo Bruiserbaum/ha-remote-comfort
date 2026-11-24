@@ -1,0 +1,311 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Remote Comfort",
+        "description": "Set up comfort control for a home. You'll add HVAC zones and rooms afterwards from the integration page.",
+        "data": {
+          "name": "Name",
+          "weather_entity": "Weather forecast",
+          "presence_entities": "Presence",
+          "presence_sets_away": "Use away targets when nobody is home",
+          "respect_manual_changes": "Respect manual thermostat changes",
+          "wake_lead": "Wake-up lead time",
+          "sleep_lead": "Bedtime lead time",
+          "return_lead": "Return-home lead time",
+          "idle_zone_offset": "Idle zone relaxation",
+          "compensation_limit": "Room compensation limit"
+        },
+        "data_description": {
+          "weather_entity": "Used to pre-cool on hot days and start recovery earlier in extreme weather.",
+          "presence_entities": "People, phones, or sensors. If anyone is home during a scheduled away period, comfort targets are kept.",
+          "presence_sets_away": "Also switch to away targets on remote/off days when every presence entity says nobody is home.",
+          "respect_manual_changes": "If someone changes a thermostat by hand, leave that zone alone until the next period (e.g. until bedtime).",
+          "wake_lead": "How long before wake-up to start moving to daytime targets.",
+          "sleep_lead": "How long before bedtime to start cooling/warming the bedrooms.",
+          "return_lead": "Base time before you get home to start recovering. Extended automatically in extreme weather.",
+          "idle_zone_offset": "How far to relax a zone whose rooms aren't in use right now (e.g. downstairs overnight).",
+          "compensation_limit": "Maximum amount a zone's thermostat setpoint is biased so the rooms you care about reach the target."
+        }
+      },
+      "schedule": {
+        "title": "Your week",
+        "description": "Days that are neither remote nor office days are treated as days off.",
+        "data": {
+          "remote_days": "Remote work days",
+          "office_days": "Office days",
+          "wake_time": "Wake up (work days)",
+          "off_day_wake_time": "Wake up (days off)",
+          "sleep_time": "Bedtime",
+          "work_start": "Work starts (remote days)",
+          "work_end": "Work ends (remote days)",
+          "leave_time": "Leave home (office days)",
+          "return_time": "Get home (office days)"
+        }
+      },
+      "comfort": {
+        "title": "Comfort targets",
+        "description": "Prefer to sleep cold? Set the sleep cool and heat targets lower than daytime.",
+        "data": {
+          "comfort_cool": "Home: cool to",
+          "comfort_heat": "Home: heat to",
+          "sleep_cool": "Sleep: cool to",
+          "sleep_heat": "Sleep: heat to",
+          "away_cool": "Away: cool to",
+          "away_heat": "Away: heat to"
+        }
+      }
+    },
+    "error": {
+      "day_overlap": "A day can't be both a remote day and an office day."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Remote Comfort settings",
+        "menu_options": {
+          "general": "General, presence and lead times",
+          "schedule": "Weekly schedule",
+          "comfort": "Comfort targets",
+          "weather": "Weather response",
+          "balancing": "Zone balancing"
+        }
+      },
+      "general": {
+        "title": "General",
+        "data": {
+          "weather_entity": "Weather forecast",
+          "presence_entities": "Presence",
+          "presence_sets_away": "Use away targets when nobody is home",
+          "respect_manual_changes": "Respect manual thermostat changes",
+          "wake_lead": "Wake-up lead time",
+          "sleep_lead": "Bedtime lead time",
+          "return_lead": "Return-home lead time",
+          "idle_zone_offset": "Idle zone relaxation",
+          "compensation_limit": "Room compensation limit"
+        },
+        "data_description": {
+          "presence_sets_away": "Also switch to away targets on remote/off days when every presence entity says nobody is home.",
+          "respect_manual_changes": "If someone changes a thermostat by hand, leave that zone alone until the next period.",
+          "return_lead": "Base time before you get home to start recovering. Extended automatically in extreme weather.",
+          "idle_zone_offset": "How far to relax a zone whose rooms aren't in use right now.",
+          "compensation_limit": "Maximum bias applied to a zone's setpoint so the rooms you care about reach the target."
+        }
+      },
+      "schedule": {
+        "title": "Your week",
+        "data": {
+          "remote_days": "Remote work days",
+          "office_days": "Office days",
+          "wake_time": "Wake up (work days)",
+          "off_day_wake_time": "Wake up (days off)",
+          "sleep_time": "Bedtime",
+          "work_start": "Work starts (remote days)",
+          "work_end": "Work ends (remote days)",
+          "leave_time": "Leave home (office days)",
+          "return_time": "Get home (office days)"
+        }
+      },
+      "comfort": {
+        "title": "Comfort targets",
+        "data": {
+          "comfort_cool": "Home: cool to",
+          "comfort_heat": "Home: heat to",
+          "sleep_cool": "Sleep: cool to",
+          "sleep_heat": "Sleep: heat to",
+          "away_cool": "Away: cool to",
+          "away_heat": "Away: heat to",
+          "vacation_offset": "Extra vacation setback",
+          "min_gap": "Minimum heat/cool gap"
+        },
+        "data_description": {
+          "min_gap": "For thermostats in heat/cool (auto) mode."
+        }
+      },
+      "weather": {
+        "title": "Weather response",
+        "data": {
+          "hot_threshold": "Hot day: forecast high at or above",
+          "cold_threshold": "Cold day: forecast low at or below",
+          "precool_offset": "Pre-cool by",
+          "precool_until": "Pre-cool until",
+          "hot_away_cap": "Hot day: max away drift above comfort",
+          "cold_away_cap": "Cold day: max away drop below comfort",
+          "lead_per_degree": "Extra lead time per degree past the threshold",
+          "max_lead": "Maximum lead time"
+        },
+        "data_description": {
+          "precool_offset": "On hot days, while you're home in the morning, cool this much below the comfort target so the house coasts through the afternoon peak.",
+          "hot_away_cap": "Keeps an empty house from heat-soaking on hot days so it can recover by the time you're back."
+        }
+      },
+      "balancing": {
+        "title": "Zone balancing",
+        "description": "Applies to zones that share an HVAC unit (zoned dampers). When one zone is much further from target than another, the comfortable zone is temporarily closed so all the air goes where it's needed.",
+        "data": {
+          "balance_enabled": "Enable balancing",
+          "suppress_method": "How to close a zone",
+          "balance_trigger": "Start when the worst zone is off target by",
+          "balance_spread": "...and at least this much worse than the zone being closed",
+          "balance_safety": "Re-open a closed zone if it drifts past target by",
+          "balance_setback": "Setback amount (setback method)",
+          "balance_min_minutes": "Minimum closed time",
+          "balance_max_minutes": "Maximum closed time",
+          "balance_cooldown_minutes": "Wait before closing the same zone again"
+        }
+      }
+    },
+    "error": {
+      "day_overlap": "A day can't be both a remote day and an office day."
+    }
+  },
+  "config_subentries": {
+    "zone": {
+      "entry_type": "HVAC zone",
+      "initiate_flow": { "user": "Add HVAC zone" },
+      "step": {
+        "user": {
+          "title": "Add HVAC zone",
+          "description": "One thermostat, or one zone thermostat on a zoning panel. Zones that share the same HVAC unit can be balanced against each other.",
+          "data": {
+            "name": "Name",
+            "climate_entity": "Thermostat",
+            "unit": "HVAC unit",
+            "floor": "Floor",
+            "compensate": "Compensate using room sensors"
+          },
+          "data_description": {
+            "unit": "Give zones served by the same furnace/air handler the same unit name (e.g. \"Main unit\").",
+            "compensate": "Bias this thermostat's setpoint so the rooms in use reach the target, not just the thermostat's own location."
+          }
+        },
+        "reconfigure": {
+          "title": "Edit HVAC zone",
+          "data": {
+            "name": "Name",
+            "climate_entity": "Thermostat",
+            "unit": "HVAC unit",
+            "floor": "Floor",
+            "compensate": "Compensate using room sensors"
+          }
+        }
+      },
+      "error": { "climate_in_use": "That thermostat is already used by another zone." },
+      "abort": { "reconfigure_successful": "Zone updated." }
+    },
+    "room": {
+      "entry_type": "Room",
+      "initiate_flow": { "user": "Add room" },
+      "step": {
+        "user": {
+          "title": "Add room",
+          "description": "Rooms decide which temperatures matter when. Bedrooms count overnight, offices and living spaces during remote work hours, and everything but bedrooms when you're home.",
+          "data": {
+            "name": "Name",
+            "zone": "Served by zone",
+            "sensors": "Temperature sensors",
+            "role": "Used as",
+            "floor": "Floor"
+          }
+        },
+        "reconfigure": {
+          "title": "Edit room",
+          "data": {
+            "name": "Name",
+            "zone": "Served by zone",
+            "sensors": "Temperature sensors",
+            "role": "Used as",
+            "floor": "Floor"
+          }
+        }
+      },
+      "abort": {
+        "no_zones": "Add an HVAC zone first.",
+        "reconfigure_successful": "Room updated."
+      }
+    }
+  },
+  "selector": {
+    "weekday": {
+      "options": {
+        "mon": "Monday",
+        "tue": "Tuesday",
+        "wed": "Wednesday",
+        "thu": "Thursday",
+        "fri": "Friday",
+        "sat": "Saturday",
+        "sun": "Sunday"
+      }
+    },
+    "role": {
+      "options": {
+        "bedroom": "Bedroom",
+        "office": "Office",
+        "living": "Living space",
+        "other": "Other"
+      }
+    },
+    "suppress_method": {
+      "options": {
+        "setback": "Raise/lower its setpoint (safest with zoning panels)",
+        "off": "Turn the zone off"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "Status",
+        "state": {
+          "home": "Home",
+          "working": "Working from home",
+          "away": "Away",
+          "returning": "Getting ready for return",
+          "sleep": "Sleep",
+          "vacation": "Vacation",
+          "paused": "Paused"
+        }
+      },
+      "cool_target": { "name": "Cool target" },
+      "heat_target": { "name": "Heat target" },
+      "zone_comfort": { "name": "Comfort temperature" },
+      "room_temperature": { "name": "Temperature" }
+    },
+    "binary_sensor": {
+      "balancing": { "name": "Balancing" }
+    },
+    "select": {
+      "mode": {
+        "name": "Mode",
+        "state": {
+          "auto": "Auto (schedule)",
+          "home": "Home",
+          "away": "Away",
+          "sleep": "Sleep",
+          "vacation": "Vacation"
+        }
+      },
+      "today": {
+        "name": "Today is",
+        "state": {
+          "auto": "Per schedule",
+          "remote": "Remote day",
+          "office": "Office day",
+          "off": "Day off"
+        }
+      }
+    },
+    "switch": {
+      "control": { "name": "Thermostat control" }
+    },
+    "number": {
+      "comfort_cool": { "name": "Home cool target" },
+      "comfort_heat": { "name": "Home heat target" },
+      "sleep_cool": { "name": "Sleep cool target" },
+      "sleep_heat": { "name": "Sleep heat target" },
+      "away_cool": { "name": "Away cool target" },
+      "away_heat": { "name": "Away heat target" }
+    }
+  }
+}

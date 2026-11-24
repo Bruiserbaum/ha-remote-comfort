@@ -1,0 +1,48 @@
+# Example dashboard view for Remote Comfort.
+# Replace entity IDs with yours (they follow your house, zone and room names).
+title: Comfort
+views:
+  - title: Comfort
+    path: comfort
+    cards:
+      - type: tile
+        entity: sensor.remote_comfort_home_status
+        features_position: bottom
+      - type: entities
+        title: Controls
+        entities:
+          - switch.remote_comfort_home_thermostat_control
+          - select.remote_comfort_home_mode
+          - select.remote_comfort_home_today_is
+          - number.remote_comfort_home_home_cool_target
+          - number.remote_comfort_home_home_heat_target
+          - number.remote_comfort_home_sleep_cool_target
+          - number.remote_comfort_home_sleep_heat_target
+      - type: markdown
+        title: Why
+        content: >
+          {% for r in state_attr('sensor.remote_comfort_home_status', 'reasons') or [] %}
+          - {{ r }}
+          {% endfor %}
+      # One graph per floor: room temperatures against the active target.
+      - type: history-graph
+        title: Upstairs
+        hours_to_show: 24
+        entities:
+          - sensor.office_temperature
+          - sensor.primary_bedroom_temperature
+          - sensor.upstairs_zone_comfort_temperature
+          - sensor.remote_comfort_home_cool_target
+      - type: history-graph
+        title: Downstairs
+        hours_to_show: 24
+        entities:
+          - sensor.living_room_temperature
+          - sensor.downstairs_zone_comfort_temperature
+          - sensor.remote_comfort_home_cool_target
+      - type: history-graph
+        title: Balancing
+        hours_to_show: 24
+        entities:
+          - binary_sensor.upstairs_zone_balancing
+          - binary_sensor.downstairs_zone_balancing
