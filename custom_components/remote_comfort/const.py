@@ -75,6 +75,8 @@ _COMMON_DEFAULTS: dict[str, object] = {
     "balance_max_minutes": 45,
     "balance_cooldown_minutes": 15,
     "sensor_max_age": 240,
+    "guard_enabled": True,
+    "guard_switch_mode": True,
 }
 
 _F_DEFAULTS: dict[str, float] = {
@@ -100,6 +102,11 @@ _F_DEFAULTS: dict[str, float] = {
     "balance_setback": 5,
     "safety_min": 50,
     "safety_max": 90,
+    "guard_min": 55,
+    "guard_max": 85,
+    "guard_margin": 2,
+    "failsafe_heat": 66,
+    "failsafe_cool": 76,
 }
 
 _C_DEFAULTS: dict[str, float] = {
@@ -125,6 +132,11 @@ _C_DEFAULTS: dict[str, float] = {
     "balance_setback": 3,
     "safety_min": 10,
     "safety_max": 32,
+    "guard_min": 13,
+    "guard_max": 29.5,
+    "guard_margin": 1,
+    "failsafe_heat": 19,
+    "failsafe_cool": 24.5,
 }
 
 

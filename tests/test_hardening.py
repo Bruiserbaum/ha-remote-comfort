@@ -278,3 +278,88 @@ async def test_failed_switch_back_on_is_retried(hass: HomeAssistant, freezer, ha
     freezer.tick(timedelta(minutes=2))
     await entry.runtime_data.async_refresh()
     assert attempts == ["cool", "cool"]
+
+
+async def test_guard_overrides_pause_and_manual_hold(hass: HomeAssistant, freezer) -> None:
+    freezer.move_to(MONDAY_4PM)
+    set_temp = async_mock_service(hass, "climate", "set_temperature")
+    set_mode = async_mock_service(hass, "climate", "set_hvac_mode")
+    notes = async_mock_service(hass, "persistent_notification", "create")
+    phone = async_mock_service(hass, "notify", "mobile_app_phone")
+    hass.states.async_set("climate.main", "off", {"current_temperature": 52, "temperature": 60,
+                                                  "hvac_modes": ["off", "heat", "cool"], "min_temp": 45, "max_temp": 95})
+    entry = await setup(hass, [zone("main", "Main", "climate.main")], notify_service="notify.mobile_app_phone")
+    await hass.services.async_call("switch", "turn_off",
+                                   {"entity_id": "switch.remote_comfort_home_thermostat_control"}, blocking=True)
+    await entry.runtime_data.async_refresh()
+    assert set_mode[0].data["hvac_mode"] == "heat"
+    assert set_temp[-1].data["temperature"] == 69
+    assert notes and "too cold" in notes[0].data["title"]
+    assert phone and "too cold" in phone[0].data["title"]
+    assert hass.states.get("sensor.remote_comfort_home_status").attributes["guard_active"] == ["Main"]
+
+
+async def test_failsafe_when_updates_keep_failing(hass: HomeAssistant, freezer) -> None:
+    freezer.move_to(MONDAY_4PM)
+    set_temp = async_mock_service(hass, "climate", "set_temperature")
+    set_mode = async_mock_service(hass, "climate", "set_hvac_mode")
+    notes = async_mock_service(hass, "persistent_notification", "create")
+    house_states(hass)
+    entry = await setup(hass, HOUSE, suppress_method="off")
+    coordinator = entry.runtime_data
+    assert "down" in coordinator.engine.suppressed
+    climate(hass, "climate.down", 73.5, 74, mode="off")
+
+    # Simulate a bug: every update now crashes.
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated bug")
+    coordinator.engine.evaluate = boom
+    freezer.tick(timedelta(minutes=2))
+    await coordinator.async_refresh()
+    assert not coordinator.last_update_success
+    await coordinator._async_watchdog()
+    assert not coordinator.failsafe_active  # not yet: only 2 minutes
+
+    freezer.tick(timedelta(minutes=9))
+    await coordinator.async_refresh()
+    n = len(set_temp)
+    await coordinator._async_watchdog()
+    assert coordinator.failsafe_active
+    sent = {c.data["entity_id"]: c.data["temperature"] for c in set_temp[n:]}
+    assert sent == {"climate.up": 76, "climate.down": 76}
+    assert set_mode[-1].data == {"entity_id": "climate.down", "hvac_mode": "cool"}
+    assert any("failsafe" in c.data["title"].lower() for c in notes)
+    assert problems(hass).state == "on"
+
+    # Not re-applied every minute.
+    n = len(set_temp)
+    freezer.tick(timedelta(minutes=1))
+    await coordinator._async_watchdog()
+    assert len(set_temp) == n
+
+    # Bug goes away: normal control resumes and the failsafe clears.
+    del coordinator.engine.evaluate
+    await coordinator.async_refresh()
+    assert coordinator.last_update_success and not coordinator.failsafe_active
+
+
+async def test_failsafe_not_used_when_control_switched_off(hass: HomeAssistant, freezer) -> None:
+    freezer.move_to(MONDAY_4PM)
+    set_temp = async_mock_service(hass, "climate", "set_temperature")
+    climate(hass, "climate.main", 74, 74)
+    entry = await setup(hass, [zone("main", "Main", "climate.main")])
+    entry.runtime_data.enabled = False
+    entry.runtime_data._last_ok -= 3600
+    await entry.runtime_data._async_watchdog()
+    assert not entry.runtime_data.failsafe_active and not set_temp
+
+
+async def test_zones_switched_back_on_at_shutdown(hass: HomeAssistant, freezer) -> None:
+    freezer.move_to(MONDAY_4PM)
+    async_mock_service(hass, "climate", "set_temperature")
+    set_mode = async_mock_service(hass, "climate", "set_hvac_mode")
+    house_states(hass)
+    entry = await setup(hass, HOUSE, suppress_method="off")
+    climate(hass, "climate.down", 73.5, 74, mode="off")
+    await entry.runtime_data.async_on_stop()
+    assert set_mode[-1].data == {"entity_id": "climate.down", "hvac_mode": "cool"}

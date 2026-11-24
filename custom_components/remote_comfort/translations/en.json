@@ -15,9 +15,7 @@
           "return_lead": "Return-home lead time",
           "idle_zone_offset": "Idle zone relaxation",
           "compensation_limit": "Room compensation limit",
-          "sensor_max_age": "Ignore sensors silent for longer than",
-          "safety_min": "Never set a thermostat below",
-          "safety_max": "Never set a thermostat above"
+          "sensor_max_age": "Ignore sensors silent for longer than"
         },
         "data_description": {
           "weather_entity": "Used to pre-cool on hot days and start recovery earlier in extreme weather.",
@@ -29,9 +27,7 @@
           "return_lead": "Base time before you get home to start recovering. Extended automatically in extreme weather.",
           "idle_zone_offset": "How far to relax a zone whose rooms aren't in use right now (e.g. downstairs overnight).",
           "compensation_limit": "Maximum amount a zone's thermostat setpoint is biased so the rooms you care about reach the target.",
-          "sensor_max_age": "Battery sensors can die while still showing their last value. Readings older than this are ignored (0 = never).",
-          "safety_min": "Hard floor for any setpoint sent, including setbacks (freeze protection).",
-          "safety_max": "Hard ceiling for any setpoint sent, including setbacks."
+          "sensor_max_age": "Battery sensors can die while still showing their last value. Readings older than this are ignored (0 = never)."
         }
       },
       "schedule": {
@@ -60,11 +56,41 @@
           "away_cool": "Away: cool to",
           "away_heat": "Away: heat to"
         }
+      },
+      "safety": {
+        "title": "Safety",
+        "description": "Your last line of defense. The house guard watches actual room temperatures and overrides everything (schedule, away/vacation, manual holds, balancing, even the control switch) to keep the house inside these limits. The failsafe setpoints are used if Remote Comfort itself stops working.",
+        "data": {
+          "guard_enabled": "House guard",
+          "guard_min": "Coldest the house may ever get",
+          "guard_max": "Hottest the house may ever get",
+          "guard_margin": "Guard ends once back inside the limit by",
+          "guard_switch_mode": "Guard may turn heating/cooling on",
+          "failsafe_heat": "Failsafe: heat to",
+          "failsafe_cool": "Failsafe: cool to",
+          "safety_min": "Never set a thermostat below",
+          "safety_max": "Never set a thermostat above",
+          "notify_service": "Also notify via"
+        },
+        "data_description": {
+          "guard_min": "If any room or thermostat in a zone reads this or colder, that zone heats to your home heat target. Think frozen pipes, a pet at home, a system left off.",
+          "guard_max": "If any room or thermostat in a zone reads this or hotter, that zone cools to your home cool target.",
+          "guard_switch_mode": "If a thermostat is off (or cooling when the house is freezing), switch it to heat/cool, and put it back once the house recovers.",
+          "failsafe_heat": "If Remote Comfort stops working for 10 minutes, heating thermostats are set to this.",
+          "failsafe_cool": "If Remote Comfort stops working for 10 minutes, cooling thermostats are set to this.",
+          "safety_min": "Hard floor for any setpoint sent, including setbacks.",
+          "safety_max": "Hard ceiling for any setpoint sent, including setbacks.",
+          "notify_service": "Optional notify service for guard and failsafe alerts, e.g. mobile_app_my_phone. Alerts always appear in HA notifications too."
+        }
       }
     },
     "error": {
       "day_overlap": "A day can't be both a remote day and an office day.",
-      "safety_range": "The lower safety limit must be below the upper one."
+      "safety_range": "The lower thermostat limit must be below the upper one.",
+      "guard_range": "The coldest limit must be below the hottest limit.",
+      "failsafe_range": "The failsafe heat setpoint must be below the failsafe cool setpoint.",
+      "failsafe_outside_guard": "Failsafe setpoints must sit inside the house guard limits.",
+      "invalid_service": "Enter a notify service name like mobile_app_my_phone."
     }
   },
   "options": {
@@ -72,6 +98,7 @@
       "init": {
         "title": "Remote Comfort settings",
         "menu_options": {
+          "safety": "Safety: house guard and failsafe",
           "general": "General, presence and lead times",
           "schedule": "Weekly schedule",
           "comfort": "Comfort targets",
@@ -91,9 +118,7 @@
           "return_lead": "Return-home lead time",
           "idle_zone_offset": "Idle zone relaxation",
           "compensation_limit": "Room compensation limit",
-          "sensor_max_age": "Ignore sensors silent for longer than",
-          "safety_min": "Never set a thermostat below",
-          "safety_max": "Never set a thermostat above"
+          "sensor_max_age": "Ignore sensors silent for longer than"
         },
         "data_description": {
           "presence_sets_away": "Also switch to away targets on remote/off days when every presence entity says nobody is home.",
@@ -101,9 +126,7 @@
           "return_lead": "Base time before you get home to start recovering. Extended automatically in extreme weather.",
           "idle_zone_offset": "How far to relax a zone whose rooms aren't in use right now.",
           "compensation_limit": "Maximum bias applied to a zone's setpoint so the rooms you care about reach the target.",
-          "sensor_max_age": "Battery sensors can die while still showing their last value. Readings older than this are ignored (0 = never).",
-          "safety_min": "Hard floor for any setpoint sent, including setbacks (freeze protection).",
-          "safety_max": "Hard ceiling for any setpoint sent, including setbacks."
+          "sensor_max_age": "Battery sensors can die while still showing their last value. Readings older than this are ignored (0 = never)."
         }
       },
       "schedule": {
@@ -167,11 +190,41 @@
           "balance_max_minutes": "Maximum closed time",
           "balance_cooldown_minutes": "Wait before closing the same zone again"
         }
+      },
+      "safety": {
+        "title": "Safety",
+        "description": "Your last line of defense. The house guard watches actual room temperatures and overrides everything (schedule, away/vacation, manual holds, balancing, even the control switch) to keep the house inside these limits. The failsafe setpoints are used if Remote Comfort itself stops working.",
+        "data": {
+          "guard_enabled": "House guard",
+          "guard_min": "Coldest the house may ever get",
+          "guard_max": "Hottest the house may ever get",
+          "guard_margin": "Guard ends once back inside the limit by",
+          "guard_switch_mode": "Guard may turn heating/cooling on",
+          "failsafe_heat": "Failsafe: heat to",
+          "failsafe_cool": "Failsafe: cool to",
+          "safety_min": "Never set a thermostat below",
+          "safety_max": "Never set a thermostat above",
+          "notify_service": "Also notify via"
+        },
+        "data_description": {
+          "guard_min": "If any room or thermostat in a zone reads this or colder, that zone heats to your home heat target. Think frozen pipes, a pet at home, a system left off.",
+          "guard_max": "If any room or thermostat in a zone reads this or hotter, that zone cools to your home cool target.",
+          "guard_switch_mode": "If a thermostat is off (or cooling when the house is freezing), switch it to heat/cool, and put it back once the house recovers.",
+          "failsafe_heat": "If Remote Comfort stops working for 10 minutes, heating thermostats are set to this.",
+          "failsafe_cool": "If Remote Comfort stops working for 10 minutes, cooling thermostats are set to this.",
+          "safety_min": "Hard floor for any setpoint sent, including setbacks.",
+          "safety_max": "Hard ceiling for any setpoint sent, including setbacks.",
+          "notify_service": "Optional notify service for guard and failsafe alerts, e.g. mobile_app_my_phone. Alerts always appear in HA notifications too."
+        }
       }
     },
     "error": {
       "day_overlap": "A day can't be both a remote day and an office day.",
-      "safety_range": "The lower safety limit must be below the upper one."
+      "safety_range": "The lower thermostat limit must be below the upper one.",
+      "guard_range": "The coldest limit must be below the hottest limit.",
+      "failsafe_range": "The failsafe heat setpoint must be below the failsafe cool setpoint.",
+      "failsafe_outside_guard": "Failsafe setpoints must sit inside the house guard limits.",
+      "invalid_service": "Enter a notify service name like mobile_app_my_phone."
     }
   },
   "config_subentries": {

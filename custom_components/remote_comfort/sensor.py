@@ -64,6 +64,8 @@ class StatusSensor(RemoteComfortEntity, SensorEntity):
             "forecast_low": w.low,
             "outdoor_temperature": w.current,
             "return_lead_minutes": d.return_lead,
+            "guard_active": d.guarded,
+            "failsafe_active": self.coordinator.failsafe_active,
             "occupied": self.coordinator.occupied,
             "held_zones": [
                 self.coordinator.config_entry.subentries[z].title

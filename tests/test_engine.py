@@ -315,5 +315,62 @@ def test_state_export_import_roundtrip():
     e2 = Engine()
     e2.import_state(e.export_state())
     assert e2.suppressed["down"].prev_mode == "cool"
-    e2.import_state({"bad": {"since": "nope"}, "off": {"since": at(0, 1).isoformat(), "prev_mode": "off"}})
-    assert set(e2.suppressed) == {"down"}
+    e2.import_state({"suppressed": {"bad": {"since": "nope"},
+                                    "off": {"since": at(0, 1).isoformat(), "prev_mode": "off"}},
+                     "guarded": {"g": {"direction": "sideways", "since": at(0, 1).isoformat()}}})
+    assert set(e2.suppressed) == {"down"} and not e2.guarded
+    e2.import_state("garbage")  # corrupt storage must not raise
+
+
+# -------------------------------------------------------------------- guard
+def test_guard_cools_hot_zone_even_when_away_and_paused():
+    zones, rooms = two_zone_house(up=86, down=74)
+    for mode in (Mode.AWAY, Mode.VACATION, Mode.PAUSED):
+        e = Engine()
+        d = run(e, at(1, 12), zones, rooms, mode=mode)
+        up = d.zones["up"]
+        assert up.guard and up.temperature == Prefs().comfort_cool
+        assert d.guarded == ["Upstairs"]
+
+
+def test_guard_turns_heat_on_when_system_off_and_restores_after():
+    e = Engine()
+    zones = [Zone("z", "Main", None, "off", 54, compensate=False, hvac_modes=["off", "heat", "cool"])]
+    d = run(e, at(0, 3), zones, [])
+    assert d.zones["z"].hvac_mode == "heat"
+    assert d.zones["z"].temperature == Prefs().comfort_heat
+    # Still recovering: stays on
+    zones[0].hvac_mode = "heat"
+    zones[0].thermostat_temp = 56
+    assert run(e, at(0, 3, 30), zones, []).zones["z"].guard
+    # Recovered past limit + margin: back to off, no setpoint sent in the old direction
+    zones[0].thermostat_temp = 58
+    d = run(e, at(0, 4), zones, [])
+    assert d.zones["z"].hvac_mode == "off" and d.zones["z"].temperature is None
+    assert "z" not in e.guarded
+
+
+def test_guard_respects_switch_mode_setting_and_supported_modes():
+    zones = [Zone("z", "Main", None, "off", 54, hvac_modes=["off", "cool"])]
+    d = run(Engine(), at(0, 3), zones, [])
+    assert d.zones["z"].hvac_mode is None and "can't be corrected" in " ".join(d.reasons)
+    zones = [Zone("z", "Main", None, "off", 54)]
+    d = run(Engine(), at(0, 3), zones, [], prefs=Prefs(guard_switch_mode=False))
+    assert d.zones["z"].hvac_mode is None
+
+
+def test_guard_overrides_balancing_and_uses_any_room():
+    e = Engine()
+    zones, rooms = two_zone_house(up=79, down=73.5)
+    assert run(e, at(0, 16), zones, rooms).zones["down"].suppressed
+    # A downstairs room (not one that "counts" right now) bakes past the limit.
+    rooms.append(Room("sun", "Sunroom", "down", Role.OTHER, 88))
+    d = run(e, at(0, 16, 2), zones, rooms)
+    assert d.zones["down"].guard and not d.zones["down"].suppressed
+    assert "down" not in e.suppressed
+
+
+def test_guard_targets_never_outside_guard_limits():
+    zones = [Zone("z", "Main", None, "cool", 86, compensate=False)]
+    d = run(Engine(), at(0, 12), zones, [], prefs=Prefs(comfort_cool=88))
+    assert d.zones["z"].temperature == 83  # guard_max 85 - margin 2

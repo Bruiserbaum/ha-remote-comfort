@@ -88,8 +88,23 @@ def _general_schema(unit: str) -> vol.Schema:
             vol.Required("idle_zone_offset"): _delta(unit),
             vol.Required("compensation_limit"): _delta(unit),
             vol.Required("sensor_max_age"): _minutes(1440),
+        }
+    )
+
+
+def _safety_schema(unit: str) -> vol.Schema:
+    return vol.Schema(
+        {
+            vol.Required("guard_enabled"): _BOOL,
+            vol.Required("guard_min"): _temp(unit),
+            vol.Required("guard_max"): _temp(unit),
+            vol.Required("guard_margin"): _delta(unit, 10),
+            vol.Required("guard_switch_mode"): _BOOL,
+            vol.Required("failsafe_heat"): _temp(unit),
+            vol.Required("failsafe_cool"): _temp(unit),
             vol.Required("safety_min"): _temp(unit),
             vol.Required("safety_max"): _temp(unit),
+            vol.Optional("notify_service"): sel.TextSelector(),
         }
     )
 
@@ -153,10 +168,23 @@ def _balancing_schema(unit: str) -> vol.Schema:
     )
 
 
-def _validate_general(data: dict[str, Any]) -> dict[str, str]:
-    if float(data.get("safety_min", 0)) >= float(data.get("safety_max", 1)):
+def _validate_safety(data: dict[str, Any]) -> dict[str, str]:
+    if float(data["guard_min"]) >= float(data["guard_max"]):
+        return {"base": "guard_range"}
+    if float(data["failsafe_heat"]) >= float(data["failsafe_cool"]):
+        return {"base": "failsafe_range"}
+    if not float(data["guard_min"]) < float(data["failsafe_heat"]) or not float(data["failsafe_cool"]) < float(data["guard_max"]):
+        return {"base": "failsafe_outside_guard"}
+    if float(data["safety_min"]) >= float(data["safety_max"]):
         return {"base": "safety_range"}
+    service = str(data.get("notify_service") or "").strip()
+    if service and not service.removeprefix("notify.").replace("_", "").isalnum():
+        return {"notify_service": "invalid_service"}
     return {}
+
+
+def _clean_safety(user_input: dict[str, Any]) -> dict[str, Any]:
+    return {"notify_service": "", **user_input}
 
 
 def _validate_schedule(data: dict[str, Any]) -> dict[str, str]:
@@ -198,11 +226,9 @@ class RemoteComfortConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            errors = _validate_general(user_input)
-            if not errors:
-                self._data = {**default_options(self._unit), **_clean_general(user_input)}
-                self._name = self._data.pop(CONF_NAME, None) or "Home"
-                return await self.async_step_schedule()
+            self._data = {**default_options(self._unit), **_clean_general(user_input)}
+            self._name = self._data.pop(CONF_NAME, None) or "Home"
+            return await self.async_step_schedule()
         schema = vol.Schema(
             {vol.Required(CONF_NAME, default="Home"): sel.TextSelector(), **_general_schema(self._unit).schema}
         )
@@ -228,10 +254,23 @@ class RemoteComfortConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_comfort(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
             self._data.update(user_input)
-            return self.async_create_entry(title=self._name, data={}, options=self._data)
+            return await self.async_step_safety()
         return self.async_show_form(
             step_id="comfort",
             data_schema=self.add_suggested_values_to_schema(_comfort_schema(self._unit, False), self._data),
+        )
+
+    async def async_step_safety(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            errors = _validate_safety(user_input)
+            if not errors:
+                self._data.update(_clean_safety(user_input))
+                return self.async_create_entry(title=self._name, data={}, options=self._data)
+        return self.async_show_form(
+            step_id="safety",
+            data_schema=self.add_suggested_values_to_schema(_safety_schema(self._unit), user_input or self._data),
+            errors=errors,
         )
 
 
@@ -260,16 +299,21 @@ class RemoteComfortOptionsFlow(OptionsFlow):
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         return self.async_show_menu(
             step_id="init",
-            menu_options=["general", "schedule", "comfort", "weather", "balancing"],
+            menu_options=["safety", "general", "schedule", "comfort", "weather", "balancing"],
         )
 
     async def async_step_general(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
-            errors = _validate_general(user_input)
-            if not errors:
-                return self._save(_clean_general(user_input))
-            return self._form("general", _general_schema(self._unit), errors, user_input)
+            return self._save(_clean_general(user_input))
         return self._form("general", _general_schema(self._unit))
+
+    async def async_step_safety(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if user_input is not None:
+            errors = _validate_safety(user_input)
+            if not errors:
+                return self._save(_clean_safety(user_input))
+            return self._form("safety", _safety_schema(self._unit), errors, user_input)
+        return self._form("safety", _safety_schema(self._unit))
 
     async def async_step_schedule(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:

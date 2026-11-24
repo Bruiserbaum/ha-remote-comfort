@@ -155,6 +155,14 @@ class Prefs:
     safety_min: float = 50
     safety_max: float = 90
 
+    # House guard: hard limits on actual room temperatures. Overrides
+    # everything (holds, balancing, away/vacation, pause).
+    guard_enabled: bool = True
+    guard_min: float = 55
+    guard_max: float = 85
+    guard_margin: float = 2  # must recover this far inside the limit to end
+    guard_switch_mode: bool = True  # may switch an off/wrong-mode thermostat
+
 
 @dataclass(slots=True)
 class Room:
@@ -178,6 +186,7 @@ class Zone:
     max_temp: float | None = None
     step: float = 1.0
     floor: str | None = None
+    hvac_modes: list[str] | None = None  # supported modes, if known
 
 
 @dataclass(slots=True)
@@ -218,6 +227,7 @@ class ZoneDecision:
     target_high: float | None = None
     hvac_mode: str | None = None  # mode to set, when we change it
     suppressed: bool = False
+    guard: bool = False  # house guard is forcing this zone
     reason: str = ""
 
 
@@ -232,6 +242,7 @@ class Decision:
     return_lead: int
     reasons: list[str]
     zones: dict[str, ZoneDecision]
+    guarded: list[str] = field(default_factory=list)  # zone names under guard
 
 
 @dataclass(slots=True)
@@ -240,22 +251,37 @@ class _Suppression:
     prev_mode: str
 
 
+@dataclass(slots=True)
+class _Guard:
+    direction: str  # "cool" or "heat"
+    since: datetime
+    prev_mode: str | None = None  # set when the guard switched the mode
+
+
 class Engine:
     """Stateful decision engine (state = active balancing suppressions)."""
 
     def __init__(self) -> None:
         self.suppressed: dict[str, _Suppression] = {}
         self.cooldown_until: dict[str, datetime] = {}
+        self.guarded: dict[str, _Guard] = {}
 
-    def export_state(self) -> dict[str, dict[str, str]]:
-        """Suppressions in a JSON-friendly form (for persistence across restarts)."""
+    def export_state(self) -> dict[str, dict[str, dict[str, str | None]]]:
+        """Engine state in a JSON-friendly form (for persistence across restarts)."""
         return {
-            zone_id: {"since": sup.since.isoformat(), "prev_mode": sup.prev_mode}
-            for zone_id, sup in self.suppressed.items()
+            "suppressed": {
+                zone_id: {"since": sup.since.isoformat(), "prev_mode": sup.prev_mode}
+                for zone_id, sup in self.suppressed.items()
+            },
+            "guarded": {
+                zone_id: {"direction": g.direction, "since": g.since.isoformat(), "prev_mode": g.prev_mode}
+                for zone_id, g in self.guarded.items()
+            },
         }
 
-    def import_state(self, data: dict[str, dict[str, str]]) -> None:
-        for zone_id, item in (data or {}).items():
+    def import_state(self, data: dict) -> None:
+        data = data if isinstance(data, dict) else {}
+        for zone_id, item in (data.get("suppressed") or {}).items():
             try:
                 since = datetime.fromisoformat(item["since"])
                 prev_mode = str(item["prev_mode"])
@@ -263,6 +289,15 @@ class Engine:
                 continue
             if prev_mode and prev_mode != "off":
                 self.suppressed[zone_id] = _Suppression(since=since, prev_mode=prev_mode)
+        for zone_id, item in (data.get("guarded") or {}).items():
+            try:
+                direction = str(item["direction"])
+                since = datetime.fromisoformat(item["since"])
+                prev_mode = item.get("prev_mode")
+            except (KeyError, TypeError, ValueError, AttributeError):
+                continue
+            if direction in ("cool", "heat"):
+                self.guarded[zone_id] = _Guard(direction, since, str(prev_mode) if prev_mode else None)
 
     def release_zone(self, zone_id: str, now: datetime, cooldown_minutes: int) -> None:
         """Forget a suppression (e.g. a person turned the zone back on)."""
@@ -367,6 +402,8 @@ class Engine:
                         reason="Released on pause",
                     )
 
+        guarded = self._guard(inp, zones, reasons)
+
         return Decision(
             period=period,
             day_type=day_type,
@@ -377,6 +414,7 @@ class Engine:
             return_lead=return_lead,
             reasons=reasons,
             zones=zones,
+            guarded=guarded,
         )
 
     def _house_targets(
@@ -510,6 +548,98 @@ class Engine:
             value = min(zone.max_temp, value)
         return round(value, 2)
 
+    # -------------------------------------------------------------------- guard
+    @staticmethod
+    def _blank(zone: Zone) -> ZoneDecision:
+        return ZoneDecision(zone.zone_id, zone.name, None, "none", [], None, None, None)
+
+    def _guard(self, inp: Inputs, zones: dict[str, ZoneDecision], reasons: list[str]) -> list[str]:
+        """Hard indoor limits. Runs last, so it overrides every other decision."""
+        p = inp.prefs
+        if inp.configured_zone_ids is not None:
+            for zone_id in list(self.guarded):
+                if zone_id not in inp.configured_zone_ids:
+                    self.guarded.pop(zone_id)
+        active: list[str] = []
+        for zone in inp.zones:
+            temps = [
+                r.temperature for r in inp.rooms
+                if r.zone_id == zone.zone_id and r.temperature is not None
+            ]
+            if zone.thermostat_temp is not None:
+                temps.append(zone.thermostat_temp)
+            hottest = max(temps) if temps else None
+            coldest = min(temps) if temps else None
+            g = self.guarded.get(zone.zone_id)
+
+            if g is not None:
+                recovered = (
+                    not p.guard_enabled
+                    or not temps
+                    or (g.direction == "cool" and hottest <= p.guard_max - p.guard_margin)
+                    or (g.direction == "heat" and coldest >= p.guard_min + p.guard_margin)
+                )
+                if recovered:
+                    self.guarded.pop(zone.zone_id)
+                    if g.prev_mode is not None and g.prev_mode != zone.hvac_mode:
+                        dec = zones.get(zone.zone_id) or self._blank(zone)
+                        # Mode goes back; setpoints follow next cycle in that mode.
+                        dec.hvac_mode = g.prev_mode
+                        dec.temperature = dec.target_low = dec.target_high = None
+                        dec.reason = f"Guard ended; restoring {g.prev_mode}"
+                        zones[zone.zone_id] = dec
+                    reasons.append(f"Guard ended for {zone.name}")
+                    continue
+            elif p.guard_enabled and temps:
+                if hottest >= p.guard_max:
+                    g = _Guard("cool", inp.now)
+                elif coldest <= p.guard_min:
+                    g = _Guard("heat", inp.now)
+                else:
+                    continue
+                self.guarded[zone.zone_id] = g
+            else:
+                continue
+
+            # Guard is active for this zone.
+            active.append(zone.name)
+            sup = self.suppressed.pop(zone.zone_id, None)
+            mode = sup.prev_mode if sup is not None and zone.hvac_mode == "off" else zone.hvac_mode
+            compatible = ("cool", "heat_cool", "auto") if g.direction == "cool" else ("heat", "heat_cool", "auto")
+            dec = zones.get(zone.zone_id) or self._blank(zone)
+            zones[zone.zone_id] = dec
+            dec.suppressed = False
+            dec.guard = True
+            reading = hottest if g.direction == "cool" else coldest
+            if mode in compatible:
+                target_mode = mode
+            elif p.guard_switch_mode and (zone.hvac_modes is None or g.direction in zone.hvac_modes):
+                target_mode = g.direction
+                if g.prev_mode is None:
+                    g.prev_mode = mode
+            else:
+                dec.hvac_mode = None
+                dec.temperature = dec.target_low = dec.target_high = None
+                dec.reason = f"Guard: {reading:g}° but the thermostat is {zone.hvac_mode} and may not be switched"
+                reasons.append(f"GUARD: {zone.name} is at {reading:g}° and can't be corrected automatically")
+                continue
+            dec.hvac_mode = target_mode if target_mode != zone.hvac_mode else None
+
+            cool_to = min(p.comfort_cool, p.guard_max - p.guard_margin)
+            heat_to = max(p.comfort_heat, p.guard_min + p.guard_margin)
+            if target_mode == "cool":
+                dec.temperature, dec.target_low, dec.target_high = self._fit(zone, cool_to, p), None, None
+            elif target_mode == "heat":
+                dec.temperature, dec.target_low, dec.target_high = self._fit(zone, heat_to, p), None, None
+            else:
+                dec.temperature = None
+                dec.target_high = self._fit(zone, cool_to, p)
+                dec.target_low = self._fit(zone, min(heat_to, cool_to - p.min_gap), p)
+            verb = "cooling" if g.direction == "cool" else "heating"
+            dec.reason = f"Guard: {reading:g}° is past the limit; {verb}"
+            reasons.append(f"GUARD: {zone.name} is at {reading:g}°, {verb} regardless of schedule")
+        return active
+
     # ---------------------------------------------------------------- balancing
     def _balance(
         self,
@@ -588,7 +718,7 @@ class Engine:
                         self._apply_suppression(dec, p, leader, zones_by_id[dec.zone_id])
                     continue
 
-                if now < self.cooldown_until.get(dec.zone_id, now):
+                if now < self.cooldown_until.get(dec.zone_id, now) or dec.zone_id in self.guarded:
                     continue
                 if lead_demand is None or lead_demand < p.balance_trigger:
                     continue

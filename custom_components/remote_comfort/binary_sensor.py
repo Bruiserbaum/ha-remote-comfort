@@ -44,13 +44,16 @@ class ProblemSensor(RemoteComfortEntity, BinarySensorEntity):
 
     @property
     def is_on(self) -> bool:
-        return bool(self.coordinator.problems) or not self.coordinator.last_update_success
+        c = self.coordinator
+        return bool(c.problems) or not c.last_update_success or c.failsafe_active
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         problems = [p.message for p in self.coordinator.problems.values()]
         if not self.coordinator.last_update_success and self.coordinator.last_exception:
             problems.insert(0, f"Update failed: {self.coordinator.last_exception}")
+        if self.coordinator.failsafe_active:
+            problems.insert(0, "FAILSAFE ACTIVE: thermostats are at the failsafe setpoints")
         return {
             "problems": problems,
             "unavailable_zones": self.coordinator.unavailable_zones,

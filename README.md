@@ -22,6 +22,7 @@ Part of [BaumHome](https://github.com/Bruiserbaum/BaumHome), a collection of my 
   A zone with no rooms in use is relaxed. For example, downstairs overnight.
 - **Room compensation.** If a zone's thermostat hangs in a hallway that runs cooler than the office, its setpoint is biased so the **office** reaches the target. The bias is limited.
 - **Zone balancing on a shared unit.** When zones share one HVAC unit (zoned dampers) and one zone is far worse than another, the comfortable zone is closed for a while. All the air then goes where it's needed. The classic case is a hot summer afternoon with upstairs at 79 and downstairs at 73: downstairs closes and upstairs gets the full cooling capacity. Minimum and maximum closed times, a safety limit, and a cooldown prevent short-cycling.
+- **Safety net.** A *house guard* keeps every room between the coldest and hottest you'd ever accept, overriding everything else. A *failsafe* puts every thermostat at safe setpoints if Remote Comfort itself stops working. See [Safety](#safety).
 - **Respects people.** Presence entities keep comfort targets if anyone is home during a scheduled away period. A thermostat changed by hand is left alone until the next period. A master switch turns off all control.
 
 ## Install
@@ -43,10 +44,11 @@ Requires Home Assistant **2025.7** or newer.
    - Choose a weather entity (optional, but needed for the weather features) and presence entities (optional).
    - Enter your week: remote days, office days, and times.
    - Set comfort targets: home, sleep, and away, each for cooling and heating.
+   - Set safety limits: the house guard, failsafe setpoints, and an optional phone notification.
 2. On the Remote Comfort integration page:
    - **Add HVAC zone** once per thermostat (or per zone thermostat on a zoning panel). Zones served by the same furnace or air handler need the **same HVAC unit name**. That shared name is what enables balancing.
    - **Add room** once per room. Pick its temperature sensors, the zone that serves it, its role, and its floor.
-3. Fine-tune anything later under **Configure**: general, schedule, comfort, weather, and balancing.
+3. Fine-tune anything later under **Configure**: safety, general, schedule, comfort, weather, and balancing.
 
 > **Turn off your thermostats' own schedules.** Remote Comfort sends setpoints every few minutes. A thermostat schedule (Ecobee comfort settings, Nest auto-schedule, etc.) would fight it, and would also look like a manual change.
 
@@ -83,6 +85,39 @@ Every 2 minutes:
 
 The decision logic lives in [`engine.py`](custom_components/remote_comfort/engine.py), which has no Home Assistant imports, so every rule is unit tested.
 
+## Safety
+
+Two independent layers keep a bug, a bad setting, or a forgotten thermostat from turning into no heat in January or an oven in July. Both are under **Configure → Safety**.
+
+### House guard: the coldest and hottest your house may ever get
+
+Defaults: **55 °F / 85 °F** (13 / 29.5 °C).
+
+If **any** room in a zone, or the zone's thermostat, reaches a limit, that zone is forced to heat to your home heat target, or cool to your home cool target. This happens no matter what else is going on:
+
+- Away, vacation, sleep, or a manual hold
+- A zone closed for balancing (it's re-opened)
+- **Thermostat control switched off.** The guard is the one thing that still acts. Disable the guard itself if you truly want hands-off.
+- **A thermostat that's off or in the wrong mode.** It's switched to heat or cool, then put back to its old mode once the house is back inside the limit by the margin (default 2 °F / 1 °C). You can disable mode switching.
+
+You get a Home Assistant notification when the guard starts and when it ends. If you set **Also notify via** (for example `mobile_app_my_phone`), the alert goes to your phone too.
+
+### Failsafe: if Remote Comfort itself breaks
+
+Defaults: **heat 66 °F / cool 76 °F** (19 / 24.5 °C).
+
+A watchdog runs separately from the main logic. If no update has completed for **10 minutes** (a crash, a bug, a bad upgrade), it sets every thermostat to the failsafe setpoints. Any zone switched off for balancing is switched back on, and the guard's freeze and overheat rule is applied using the thermostat's own reading. You're notified.
+
+The failsafe is re-applied every 30 minutes while the problem lasts. Normal control resumes on its own when updates succeed again. The failsafe deliberately doesn't use the engine's logic, so a bug there can't stop it.
+
+It does **not** act if you turned **Thermostat control** off, or when you remove or disable the integration. In those cases your thermostats keep their last setpoint.
+
+### Other guardrails
+
+- **Setpoint limits.** Nothing outside 50–90 °F (10–32 °C) is ever sent, including setbacks, and each thermostat's own min/max is respected.
+- **Shutdown.** When Home Assistant shuts down cleanly, zones switched off for balancing are switched back on. If HA crashes instead, they're switched back on at the next start.
+- **Which closing method to use.** The default way of closing a zone, raising or lowering its setpoint, never leaves a zone without heating or cooling, even if HA dies at the worst moment. Prefer it over "turn the zone off".
+
 ## Failure handling
 
 Remote Comfort is designed to keep running when parts of the house misbehave, and to tell you about it.
@@ -105,7 +140,8 @@ Remote Comfort is designed to keep running when parts of the house misbehave, an
 | Presence entities are all unavailable | Presence is ignored. Unknown is never treated as "nobody home". |
 | A setting is invalid, or a room points at a deleted zone | The default is used for that setting and the room is ignored. Both are reported, and setup doesn't fail. |
 | A setpoint would be extreme | Everything sent is clamped to the safety limits (default 50–90 °F) and the thermostat's own min/max, including balancing setbacks. |
-| Anything unexpected | The cycle fails without touching the thermostats, the Problem sensor turns on, and the next cycle (2 minutes later) tries again. |
+| Anything unexpected | The cycle fails without touching the thermostats, the Problem sensor turns on, and the next cycle (2 minutes later) tries again. After 10 minutes of failures the **failsafe** takes over. |
+| A room gets dangerously hot or cold for any reason | The **house guard** forces heating or cooling in that zone and notifies you. |
 
 Right after HA starts, entity problems are not reported for the first 5 minutes, because integrations are still loading. An entity that stays missing or broken for **30 minutes** raises a **Repair** in *Settings → System → Repairs*. The Repair clears itself once the entity recovers.
 

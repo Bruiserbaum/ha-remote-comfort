@@ -47,7 +47,7 @@ async def _setup(hass: HomeAssistant, weather: bool = False):
     user = {"name": "Home", "presence_sets_away": False, "respect_manual_changes": True,
             "wake_lead": 30, "sleep_lead": 30, "return_lead": 45,
             "idle_zone_offset": 2, "compensation_limit": 3,
-            "sensor_max_age": 240, "safety_min": 50, "safety_max": 90}
+            "sensor_max_age": 240}
     if weather:
         user["weather_entity"] = "weather.home"
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
@@ -72,6 +72,14 @@ async def _setup(hass: HomeAssistant, weather: bool = False):
         {"comfort_cool": 74, "comfort_heat": 69, "sleep_cool": 68, "sleep_heat": 65,
          "away_cool": 80, "away_heat": 62},
     )
+    assert result["step_id"] == "safety"
+    safety = {"guard_enabled": True, "guard_min": 55, "guard_max": 85, "guard_margin": 2,
+              "guard_switch_mode": True, "failsafe_heat": 66, "failsafe_cool": 90,
+              "safety_min": 50, "safety_max": 90}
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], safety)
+    assert result["errors"] == {"base": "failsafe_outside_guard"}
+    safety["failsafe_cool"] = 76
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], safety)
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
     return hass.config_entries.async_entries(DOMAIN)[0]

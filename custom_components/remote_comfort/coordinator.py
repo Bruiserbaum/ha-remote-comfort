@@ -7,6 +7,9 @@ Fault-tolerance rules (see README "Failure handling"):
   remembered (also across restarts) so it is switched back on when it returns.
 - Every service call is time-limited and isolated per zone.
 - Problems surface on a diagnostic binary sensor; long-lasting ones become Repairs.
+- House guard (engine): hard indoor limits that override everything.
+- Failsafe (here, independent of the engine): if control stops working for
+  FAILSAFE_AFTER, every thermostat is put at the failsafe setpoints.
 """
 
 from __future__ import annotations
@@ -39,6 +42,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
@@ -98,6 +102,9 @@ REPAIR_AFTER = timedelta(minutes=30)
 OUTLIER_LIMIT = {UnitOfTemperature.FAHRENHEIT: 5.0, UnitOfTemperature.CELSIUS: 3.0}
 PLAUSIBLE = {UnitOfTemperature.FAHRENHEIT: (-20.0, 130.0), UnitOfTemperature.CELSIUS: (-30.0, 55.0)}
 STORAGE_VERSION = 1
+FAILSAFE_AFTER = 600  # s without a successful cycle before the failsafe kicks in
+FAILSAFE_REAPPLY = 1800  # s between failsafe re-applications while broken
+WATCHDOG_INTERVAL = timedelta(minutes=1)
 
 
 def _float(value: Any) -> float | None:
@@ -165,6 +172,9 @@ class RemoteComfortCoordinator(DataUpdateCoordinator[Decision]):
             hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}"
         )
         self._saved_state: dict[str, Any] | None = None
+        self._last_ok = time.monotonic()
+        self.failsafe_active = False
+        self._failsafe_at = 0.0
 
     # ------------------------------------------------------------ options
     @property
@@ -247,18 +257,22 @@ class RemoteComfortCoordinator(DataUpdateCoordinator[Decision]):
             LOGGER.exception("Could not read saved state; starting fresh")
             data = None
         if data:
-            self.engine.import_state(data.get("suppressed", {}))
+            self.engine.import_state(data)
         self._saved_state = self.engine.export_state()
 
     def _save_state(self) -> None:
         state = self.engine.export_state()
         if state != self._saved_state:
             self._saved_state = state
-            self._store.async_delay_save(lambda: {"suppressed": state}, 1)
+            self._store.async_delay_save(lambda: state, 1)
 
     def start_control(self) -> None:
         """Begin commanding thermostats (after entities restored their state)."""
         self._control_active = True
+        self._last_ok = time.monotonic()
+        self.config_entry.async_on_unload(
+            async_track_time_interval(self.hass, self._async_watchdog, WATCHDOG_INTERVAL)
+        )
         self.config_entry.async_create_task(
             self.hass, self.async_request_refresh(), "remote_comfort_start"
         )
@@ -320,6 +334,7 @@ class RemoteComfortCoordinator(DataUpdateCoordinator[Decision]):
                     max_temp=max_temp,
                     step=step if step and step > 0 else default_step,
                     floor=sub.data.get(CONF_FLOOR),
+                    hvac_modes=[str(m) for m in attrs.get("hvac_modes") or []] or None,
                 )
             )
         self.unavailable_zones = unavailable
@@ -496,6 +511,7 @@ class RemoteComfortCoordinator(DataUpdateCoordinator[Decision]):
         # Until control starts, evaluate on a scratch copy: decisions that are
         # never sent (like "switch this zone back on") must not be forgotten.
         engine = self.engine if self._control_active else copy.deepcopy(self.engine)
+        guarded_before = dict(self.engine.guarded)
         decision = engine.evaluate(
             Inputs(
                 now=now,
@@ -518,9 +534,157 @@ class RemoteComfortCoordinator(DataUpdateCoordinator[Decision]):
         for zone_id, err in self._call_failures.items():
             entity_id = self.climate_entity(zone_id) or zone_id
             problems.append(Problem(f"call_{zone_id}", f"Could not update {entity_id}: {err}", entity_id))
+        for zone_id in engine.guarded:
+            dec = decision.zones.get(zone_id)
+            name = dec.name if dec else zone_id
+            problems.append(Problem(f"guard_{zone_id}", f"House guard active for {name}: {dec.reason if dec else ''}"))
         self._save_state()
         self._update_problems(problems)
+        if self._control_active:
+            await self._announce_guard(guarded_before, decision)
+            self._last_ok = time.monotonic()
+            if self.failsafe_active:
+                self.failsafe_active = False
+                await self._notify(
+                    "failsafe", "Remote Comfort recovered",
+                    "Normal control has resumed; the failsafe setpoints are no longer in use.",
+                    dismiss=True,
+                )
         return decision
+
+    async def _announce_guard(self, before: dict, decision: Decision) -> None:
+        after = self.engine.guarded
+        for zone_id in after.keys() - before.keys():
+            dec = decision.zones.get(zone_id)
+            name = dec.name if dec else zone_id
+            limit = "too hot" if after[zone_id].direction == "cool" else "too cold"
+            await self._notify(
+                f"guard_{zone_id}",
+                f"Remote Comfort: {name} is {limit}",
+                f"{dec.reason if dec else ''}. The house guard is overriding the schedule, "
+                "holds and pause until it recovers.",
+            )
+        for zone_id in before.keys() - after.keys():
+            name = self.config_entry.subentries[zone_id].title if zone_id in self.config_entry.subentries else zone_id
+            await self._notify(
+                f"guard_{zone_id}", f"Remote Comfort: {name} is back in range",
+                "The house guard has ended; normal control resumed.", dismiss=True,
+            )
+
+    async def _notify(self, key: str, title: str, message: str, dismiss: bool = False) -> None:
+        """Persistent notification plus optional notify service. Never raises."""
+        notification_id = f"{DOMAIN}_{self.config_entry.entry_id}_{key}"
+        try:
+            if dismiss:
+                await self.hass.services.async_call(
+                    "persistent_notification", "dismiss", {"notification_id": notification_id}, blocking=True
+                )
+            else:
+                await self.hass.services.async_call(
+                    "persistent_notification", "create",
+                    {"title": title, "message": message, "notification_id": notification_id}, blocking=True,
+                )
+        except Exception as err:  # noqa: BLE001
+            LOGGER.debug("Persistent notification failed: %s", err)
+        service = str(self.options.get("notify_service") or "").strip().removeprefix("notify.")
+        if service:
+            try:
+                async with asyncio.timeout(CALL_TIMEOUT):
+                    await self.hass.services.async_call(
+                        "notify", service, {"title": title, "message": message}, blocking=True
+                    )
+            except Exception as err:  # noqa: BLE001
+                LOGGER.warning("Could not send notification via notify.%s: %s", service, err)
+
+    # ------------------------------------------------------------- failsafe
+    async def _async_watchdog(self, _now: datetime | None = None) -> None:
+        if not self._control_active or not self.enabled:
+            return
+        if time.monotonic() - self._last_ok < FAILSAFE_AFTER:
+            return
+        if self.failsafe_active and time.monotonic() - self._failsafe_at < FAILSAFE_REAPPLY:
+            return
+        error = self.last_exception or "no successful update"
+        await self.async_failsafe(f"Remote Comfort hasn't completed an update for over {FAILSAFE_AFTER // 60} minutes ({error})")
+
+    async def async_failsafe(self, reason: str) -> None:
+        """Put every thermostat at the failsafe setpoints.
+
+        Deliberately simple and independent of the engine: raw states, options
+        with defaults, and per-zone isolation.
+        """
+        LOGGER.error("Failsafe: %s", reason)
+        defaults = default_options(self.unit)
+        opts = self.config_entry.options
+
+        def num(key: str) -> float:
+            value = _float(opts.get(key))
+            return value if value is not None else float(defaults[key])
+
+        cool, heat = num("failsafe_cool"), num("failsafe_heat")
+        guard_min, guard_max = num("guard_min"), num("guard_max")
+        guard_on = opts.get("guard_enabled", True) is not False and opts.get("guard_switch_mode", True) is not False
+        if heat >= cool:
+            cool, heat = float(defaults["failsafe_cool"]), float(defaults["failsafe_heat"])
+
+        for sub in self._subentries(SUBENTRY_ZONE):
+            entity_id = sub.data.get(CONF_CLIMATE)
+            state = self.hass.states.get(entity_id) if entity_id else None
+            if state is None or state.state in _BAD_STATES:
+                continue
+            try:
+                attrs = state.attributes
+                modes = [str(m) for m in attrs.get("hvac_modes") or []]
+                mode = state.state
+                sup = self.engine.suppressed.get(sub.subentry_id)
+                if mode == "off" and sup is not None:
+                    mode = sup.prev_mode  # we switched it off: switch it back on
+                temp = self._temperature(state, attrs.get(ATTR_CURRENT_TEMPERATURE))
+                if guard_on and temp is not None and (not modes or "heat" in modes) \
+                        and temp <= guard_min and mode not in ("heat", "heat_cool", "auto"):
+                    mode = "heat"
+                elif guard_on and temp is not None and (not modes or "cool" in modes) \
+                        and temp >= guard_max and mode not in ("cool", "heat_cool", "auto"):
+                    mode = "cool"
+                if mode != state.state:
+                    await self._call("set_hvac_mode", entity_id, hvac_mode=mode)
+                lo, hi = _float(attrs.get(ATTR_MIN_TEMP)), _float(attrs.get(ATTR_MAX_TEMP))
+
+                def fit(value: float) -> float:
+                    if lo is not None:
+                        value = max(lo, value)
+                    if hi is not None:
+                        value = min(hi, value)
+                    return value
+
+                if mode == "cool":
+                    await self._call("set_temperature", entity_id, **{ATTR_TEMPERATURE: fit(cool)})
+                elif mode == "heat":
+                    await self._call("set_temperature", entity_id, **{ATTR_TEMPERATURE: fit(heat)})
+                elif mode in ("heat_cool", "auto"):
+                    await self._call(
+                        "set_temperature", entity_id,
+                        **{ATTR_TARGET_TEMP_LOW: fit(heat), ATTR_TARGET_TEMP_HIGH: fit(cool)},
+                    )
+                self._commanded.pop(sub.subentry_id, None)
+            except Exception as err:  # noqa: BLE001
+                LOGGER.error("Failsafe could not set %s: %s", entity_id, err)
+        try:
+            self.engine.suppressed.clear()
+        except Exception:  # noqa: BLE001
+            pass
+        self.failsafe_active = True
+        self._failsafe_at = time.monotonic()
+        await self._notify(
+            "failsafe",
+            "Remote Comfort failsafe active",
+            f"{reason}. All thermostats were set to the failsafe setpoints "
+            f"(heat {heat:g}°, cool {cool:g}°). Check Settings → System → Logs.",
+        )
+
+    async def async_on_stop(self, _event: Any = None) -> None:
+        """HA is shutting down: don't leave zones switched off for balancing."""
+        await self.async_release_all()
 
     def _detect_turned_back_on(self, zones: list[Zone], prefs: Prefs, now: datetime) -> None:
         """A person switched on a zone we had switched off: let go of it."""
@@ -604,13 +768,13 @@ class RemoteComfortCoordinator(DataUpdateCoordinator[Decision]):
         restoring = bool(dec.hvac_mode) and dec.hvac_mode != "off"
 
         # Manual-change detection runs before we touch anything.
-        if respect_manual:
+        if respect_manual and not dec.guard:
             current = self._setpoints(state, dec)
             if current is not None and self._manual_change(zone_id, state.state, current):
                 self.holds.setdefault(zone_id, decision.period)
                 # Accept the manual value as the new baseline.
                 self._commanded[zone_id] = _Commanded(state.state, current, current, 0)
-        if zone_id in self.holds:
+        if zone_id in self.holds and not dec.guard:
             dec.reason = "Manual change detected; holding until the next period"
             if restoring and dec.hvac_mode != state.state:
                 await self._call("set_hvac_mode", entity_id, hvac_mode=dec.hvac_mode)
@@ -647,6 +811,7 @@ class RemoteComfortCoordinator(DataUpdateCoordinator[Decision]):
             last is not None
             and last.at
             and not dec.suppressed
+            and not dec.guard
             and last.target == dec.target
             and not _differs(current, last.values)  # thermostat applied our last command
             and time.monotonic() - last.at < SMALL_CHANGE_INTERVAL
@@ -711,7 +876,7 @@ class RemoteComfortCoordinator(DataUpdateCoordinator[Decision]):
             self.engine.suppressed.pop(zone_id, None)
         state = self.engine.export_state()
         try:
-            await self._store.async_save({"suppressed": state})
+            await self._store.async_save(state)
         except Exception:  # noqa: BLE001
             LOGGER.exception("Could not save state")
 
