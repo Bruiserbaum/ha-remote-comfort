@@ -87,6 +87,9 @@ def _general_schema(unit: str) -> vol.Schema:
             vol.Required("return_lead"): _minutes(),
             vol.Required("idle_zone_offset"): _delta(unit),
             vol.Required("compensation_limit"): _delta(unit),
+            vol.Required("sensor_max_age"): _minutes(1440),
+            vol.Required("safety_min"): _temp(unit),
+            vol.Required("safety_max"): _temp(unit),
         }
     )
 
@@ -150,6 +153,12 @@ def _balancing_schema(unit: str) -> vol.Schema:
     )
 
 
+def _validate_general(data: dict[str, Any]) -> dict[str, str]:
+    if float(data.get("safety_min", 0)) >= float(data.get("safety_max", 1)):
+        return {"base": "safety_range"}
+    return {}
+
+
 def _validate_schedule(data: dict[str, Any]) -> dict[str, str]:
     if set(data.get("remote_days", [])) & set(data.get("office_days", [])):
         return {"base": "day_overlap"}
@@ -187,17 +196,20 @@ class RemoteComfortConfigFlow(ConfigFlow, domain=DOMAIN):
         return {SUBENTRY_ZONE: ZoneSubentryFlow, SUBENTRY_ROOM: RoomSubentryFlow}
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
         if user_input is not None:
-            self._data = {**default_options(self._unit), **_clean_general(user_input)}
-            self._name = user_input.pop(CONF_NAME, None) or "Home"
-            self._data.pop(CONF_NAME, None)
-            return await self.async_step_schedule()
+            errors = _validate_general(user_input)
+            if not errors:
+                self._data = {**default_options(self._unit), **_clean_general(user_input)}
+                self._name = self._data.pop(CONF_NAME, None) or "Home"
+                return await self.async_step_schedule()
         schema = vol.Schema(
             {vol.Required(CONF_NAME, default="Home"): sel.TextSelector(), **_general_schema(self._unit).schema}
         )
         return self.async_show_form(
             step_id="user",
-            data_schema=self.add_suggested_values_to_schema(schema, default_options(self._unit)),
+            data_schema=self.add_suggested_values_to_schema(schema, user_input or default_options(self._unit)),
+            errors=errors,
         )
 
     async def async_step_schedule(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
@@ -253,7 +265,10 @@ class RemoteComfortOptionsFlow(OptionsFlow):
 
     async def async_step_general(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
-            return self._save(_clean_general(user_input))
+            errors = _validate_general(user_input)
+            if not errors:
+                return self._save(_clean_general(user_input))
+            return self._form("general", _general_schema(self._unit), errors, user_input)
         return self._form("general", _general_schema(self._unit))
 
     async def async_step_schedule(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:

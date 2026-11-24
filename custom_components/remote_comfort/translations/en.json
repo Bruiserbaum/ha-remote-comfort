@@ -14,7 +14,10 @@
           "sleep_lead": "Bedtime lead time",
           "return_lead": "Return-home lead time",
           "idle_zone_offset": "Idle zone relaxation",
-          "compensation_limit": "Room compensation limit"
+          "compensation_limit": "Room compensation limit",
+          "sensor_max_age": "Ignore sensors silent for longer than",
+          "safety_min": "Never set a thermostat below",
+          "safety_max": "Never set a thermostat above"
         },
         "data_description": {
           "weather_entity": "Used to pre-cool on hot days and start recovery earlier in extreme weather.",
@@ -25,7 +28,10 @@
           "sleep_lead": "How long before bedtime to start cooling/warming the bedrooms.",
           "return_lead": "Base time before you get home to start recovering. Extended automatically in extreme weather.",
           "idle_zone_offset": "How far to relax a zone whose rooms aren't in use right now (e.g. downstairs overnight).",
-          "compensation_limit": "Maximum amount a zone's thermostat setpoint is biased so the rooms you care about reach the target."
+          "compensation_limit": "Maximum amount a zone's thermostat setpoint is biased so the rooms you care about reach the target.",
+          "sensor_max_age": "Battery sensors can die while still showing their last value. Readings older than this are ignored (0 = never).",
+          "safety_min": "Hard floor for any setpoint sent, including setbacks (freeze protection).",
+          "safety_max": "Hard ceiling for any setpoint sent, including setbacks."
         }
       },
       "schedule": {
@@ -57,7 +63,8 @@
       }
     },
     "error": {
-      "day_overlap": "A day can't be both a remote day and an office day."
+      "day_overlap": "A day can't be both a remote day and an office day.",
+      "safety_range": "The lower safety limit must be below the upper one."
     }
   },
   "options": {
@@ -83,14 +90,20 @@
           "sleep_lead": "Bedtime lead time",
           "return_lead": "Return-home lead time",
           "idle_zone_offset": "Idle zone relaxation",
-          "compensation_limit": "Room compensation limit"
+          "compensation_limit": "Room compensation limit",
+          "sensor_max_age": "Ignore sensors silent for longer than",
+          "safety_min": "Never set a thermostat below",
+          "safety_max": "Never set a thermostat above"
         },
         "data_description": {
           "presence_sets_away": "Also switch to away targets on remote/off days when every presence entity says nobody is home.",
           "respect_manual_changes": "If someone changes a thermostat by hand, leave that zone alone until the next period.",
           "return_lead": "Base time before you get home to start recovering. Extended automatically in extreme weather.",
           "idle_zone_offset": "How far to relax a zone whose rooms aren't in use right now.",
-          "compensation_limit": "Maximum bias applied to a zone's setpoint so the rooms you care about reach the target."
+          "compensation_limit": "Maximum bias applied to a zone's setpoint so the rooms you care about reach the target.",
+          "sensor_max_age": "Battery sensors can die while still showing their last value. Readings older than this are ignored (0 = never).",
+          "safety_min": "Hard floor for any setpoint sent, including setbacks (freeze protection).",
+          "safety_max": "Hard ceiling for any setpoint sent, including setbacks."
         }
       },
       "schedule": {
@@ -157,13 +170,16 @@
       }
     },
     "error": {
-      "day_overlap": "A day can't be both a remote day and an office day."
+      "day_overlap": "A day can't be both a remote day and an office day.",
+      "safety_range": "The lower safety limit must be below the upper one."
     }
   },
   "config_subentries": {
     "zone": {
       "entry_type": "HVAC zone",
-      "initiate_flow": { "user": "Add HVAC zone" },
+      "initiate_flow": {
+        "user": "Add HVAC zone"
+      },
       "step": {
         "user": {
           "title": "Add HVAC zone",
@@ -191,12 +207,18 @@
           }
         }
       },
-      "error": { "climate_in_use": "That thermostat is already used by another zone." },
-      "abort": { "reconfigure_successful": "Zone updated." }
+      "error": {
+        "climate_in_use": "That thermostat is already used by another zone."
+      },
+      "abort": {
+        "reconfigure_successful": "Zone updated."
+      }
     },
     "room": {
       "entry_type": "Room",
-      "initiate_flow": { "user": "Add room" },
+      "initiate_flow": {
+        "user": "Add room"
+      },
       "step": {
         "user": {
           "title": "Add room",
@@ -267,13 +289,26 @@
           "paused": "Paused"
         }
       },
-      "cool_target": { "name": "Cool target" },
-      "heat_target": { "name": "Heat target" },
-      "zone_comfort": { "name": "Comfort temperature" },
-      "room_temperature": { "name": "Temperature" }
+      "cool_target": {
+        "name": "Cool target"
+      },
+      "heat_target": {
+        "name": "Heat target"
+      },
+      "zone_comfort": {
+        "name": "Comfort temperature"
+      },
+      "room_temperature": {
+        "name": "Temperature"
+      }
     },
     "binary_sensor": {
-      "balancing": { "name": "Balancing" }
+      "balancing": {
+        "name": "Balancing"
+      },
+      "problem": {
+        "name": "Problem"
+      }
     },
     "select": {
       "mode": {
@@ -297,15 +332,39 @@
       }
     },
     "switch": {
-      "control": { "name": "Thermostat control" }
+      "control": {
+        "name": "Thermostat control"
+      }
     },
     "number": {
-      "comfort_cool": { "name": "Home cool target" },
-      "comfort_heat": { "name": "Home heat target" },
-      "sleep_cool": { "name": "Sleep cool target" },
-      "sleep_heat": { "name": "Sleep heat target" },
-      "away_cool": { "name": "Away cool target" },
-      "away_heat": { "name": "Away heat target" }
+      "comfort_cool": {
+        "name": "Home cool target"
+      },
+      "comfort_heat": {
+        "name": "Home heat target"
+      },
+      "sleep_cool": {
+        "name": "Sleep cool target"
+      },
+      "sleep_heat": {
+        "name": "Sleep heat target"
+      },
+      "away_cool": {
+        "name": "Away cool target"
+      },
+      "away_heat": {
+        "name": "Away heat target"
+      }
+    }
+  },
+  "issues": {
+    "entity_missing": {
+      "title": "Remote Comfort: {entity_id} not found",
+      "description": "Remote Comfort ({name}) uses `{entity_id}` as {used_by}, but that entity doesn't exist. It may have been renamed or removed.\n\nUntil it's fixed, Remote Comfort falls back to the other sensors in the room or zone (or skips that thermostat). Update the zone or room on the Remote Comfort integration page to point at the right entity."
+    },
+    "entity_unavailable": {
+      "title": "Remote Comfort: {entity_id} unavailable",
+      "description": "Remote Comfort ({name}) uses `{entity_id}` as {used_by}, and it has been unavailable or giving bad readings for over 30 minutes. Check its batteries or connection.\n\nUntil it recovers, Remote Comfort falls back to the other sensors in the room or zone (or skips that thermostat). This message clears itself once the entity is working again."
     }
   }
 }

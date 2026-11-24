@@ -8,7 +8,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import RemoteComfortConfigEntry
-from .const import LIVE_SETPOINTS
+from .const import LIVE_SETPOINTS, default_options
 from .coordinator import RemoteComfortCoordinator
 from .entity import RemoteComfortEntity
 
@@ -36,8 +36,13 @@ class SetpointNumber(RemoteComfortEntity, NumberEntity):
             self._attr_native_min_value, self._attr_native_max_value, self._attr_native_step = 40, 95, 1
 
     @property
-    def native_value(self) -> float:
-        return float(self.coordinator.options[self._key])
+    def native_value(self) -> float | None:
+        for value in (self.coordinator.options.get(self._key), default_options(self.coordinator.unit)[self._key]):
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                continue
+        return None
 
     async def async_set_native_value(self, value: float) -> None:
         await self.coordinator.async_set_option(self._key, value)

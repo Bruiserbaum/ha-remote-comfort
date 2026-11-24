@@ -62,7 +62,8 @@ Requires Home Assistant **2025.7** or newer.
 | `switch.…_thermostat_control` | Master switch. When off, nothing is sent to thermostats. |
 | `sensor.<zone>_zone_comfort_temperature` | The temperature of the rooms that matter in that zone. Attributes: demand, setpoint, active rooms, reason. |
 | `binary_sensor.<zone>_zone_balancing` | On while the zone is closed to push air elsewhere. |
-| `sensor.<room>_temperature` | Average of the room's sensors. Attributes include floor, role, zone, and HVAC unit. |
+| `sensor.<room>_temperature` | Average of the room's working sensors. Attributes include floor, role, zone, HVAC unit, and each sensor's status (ok, unavailable, stale, outlier...). |
+| `binary_sensor.remote_comfort_<name>_problem` | Diagnostic. On while anything is missing, misbehaving, or a thermostat command failed. The `problems` attribute says what. |
 
 See [`examples/dashboard.yaml`](examples/dashboard.yaml) for a dashboard that plots rooms by floor.
 
@@ -81,6 +82,34 @@ Every 2 minutes:
 "Close a zone" means raising its cooling setpoint (or lowering its heating setpoint) by the setback amount. You can choose to turn the zone **off** instead, and it is turned back on afterwards. Setback is gentler on zoning panels.
 
 The decision logic lives in [`engine.py`](custom_components/remote_comfort/engine.py), which has no Home Assistant imports, so every rule is unit tested.
+
+## Failure handling
+
+Remote Comfort is designed to keep running when parts of the house misbehave, and to tell you about it.
+
+| What goes wrong | What Remote Comfort does |
+|---|---|
+| A room sensor is unavailable, missing, or reads nonsense (outside −20…130 °F) | It ignores that sensor and averages the room's other sensors. |
+| A sensor silently stops reporting (dead battery, frozen value) | Readings older than *Ignore sensors silent for longer than* (default 4 h) are ignored. |
+| One of 3+ sensors in a room disagrees wildly with the others | That sensor is dropped as an outlier (more than 5 °F / 3 °C from the median). |
+| A sensor reports °C in a °F house (or the reverse) | The reading is converted. |
+| Every sensor in a room is down | Comfort falls back to the zone's other rooms, then to the thermostat's own reading. |
+| A zone has no temperature at all | If it was closed for balancing, it is re-opened immediately. It is never kept closed blind. |
+| A thermostat is unavailable | That zone is skipped. If Remote Comfort had switched it off, it remembers, and switches it back on when it returns. |
+| HA restarts while a zone is switched off for balancing | That state is saved to disk. After the restart the zone is switched back on or released as normal. |
+| A thermostat command fails or hangs | Each call times out after 30 s. A failure affects only that zone, is reported, and is retried next cycle. A failed "switch back on" is always retried. |
+| A cloud thermostat is slow to show a new setpoint | Commands get 5 minutes to show up. A thermostat still showing the old value is re-sent the command, not treated as a manual change. |
+| Someone switches a closed zone back on at the thermostat | Remote Comfort lets go and leaves that zone alone until the next period. |
+| Room compensation wobbles between two setpoints | Small nudges are rate-limited to one every 10 minutes. Real target changes go through immediately. |
+| The weather forecast fails | It keeps using the last good forecast for up to 6 hours and retries every 5 minutes. After that it runs without weather adjustments. |
+| Presence entities are all unavailable | Presence is ignored. Unknown is never treated as "nobody home". |
+| A setting is invalid, or a room points at a deleted zone | The default is used for that setting and the room is ignored. Both are reported, and setup doesn't fail. |
+| A setpoint would be extreme | Everything sent is clamped to the safety limits (default 50–90 °F) and the thermostat's own min/max, including balancing setbacks. |
+| Anything unexpected | The cycle fails without touching the thermostats, the Problem sensor turns on, and the next cycle (2 minutes later) tries again. |
+
+Right after HA starts, entity problems are not reported for the first 5 minutes, because integrations are still loading. An entity that stays missing or broken for **30 minutes** raises a **Repair** in *Settings → System → Repairs*. The Repair clears itself once the entity recovers.
+
+**Diagnostics:** *Settings → Devices & services → Remote Comfort → ⋮ → Download diagnostics* gives you the full decision, every sensor's status, active holds and balancing state.
 
 ## Development
 

@@ -6,7 +6,10 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 
-from .coordinator import RemoteComfortCoordinator
+from homeassistant.helpers.storage import Store
+
+from .const import DOMAIN
+from .coordinator import STORAGE_VERSION, RemoteComfortCoordinator
 
 PLATFORMS = [
     Platform.BINARY_SENSOR,
@@ -22,6 +25,7 @@ type RemoteComfortConfigEntry = ConfigEntry[RemoteComfortCoordinator]
 async def async_setup_entry(hass: HomeAssistant, entry: RemoteComfortConfigEntry) -> bool:
     """Set up Remote Comfort from a config entry."""
     coordinator = RemoteComfortCoordinator(hass, entry)
+    await coordinator.async_load_state()
     # First pass only computes; thermostats are not touched until the
     # select/switch entities have restored their previous state.
     await coordinator.async_config_entry_first_refresh()
@@ -35,8 +39,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: RemoteComfortConfigEntry
 
 async def async_unload_entry(hass: HomeAssistant, entry: RemoteComfortConfigEntry) -> bool:
     """Unload a config entry, handing back any zones we switched off."""
-    await entry.runtime_data.async_release_all()
+    coordinator = entry.runtime_data
+    await coordinator.async_release_all()
+    coordinator.async_clear_issues()
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: RemoteComfortConfigEntry) -> None:
+    """Delete saved state when the integration is removed."""
+    await Store(hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}").async_remove()
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: RemoteComfortConfigEntry) -> None:

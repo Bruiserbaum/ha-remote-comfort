@@ -46,7 +46,8 @@ async def _setup(hass: HomeAssistant, weather: bool = False):
     hass.config.units = US_CUSTOMARY_SYSTEM
     user = {"name": "Home", "presence_sets_away": False, "respect_manual_changes": True,
             "wake_lead": 30, "sleep_lead": 30, "return_lead": 45,
-            "idle_zone_offset": 2, "compensation_limit": 3}
+            "idle_zone_offset": 2, "compensation_limit": 3,
+            "sensor_max_age": 240, "safety_min": 50, "safety_max": 90}
     if weather:
         user["weather_entity"] = "weather.home"
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})

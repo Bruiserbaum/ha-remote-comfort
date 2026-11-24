@@ -13,28 +13,66 @@
           "paused": "mdi:pause-circle-outline"
         }
       },
-      "cool_target": { "default": "mdi:snowflake-thermometer" },
-      "heat_target": { "default": "mdi:sun-thermometer" },
-      "zone_comfort": { "default": "mdi:home-floor-1" },
-      "room_temperature": { "default": "mdi:thermometer" }
+      "cool_target": {
+        "default": "mdi:snowflake-thermometer"
+      },
+      "heat_target": {
+        "default": "mdi:sun-thermometer"
+      },
+      "zone_comfort": {
+        "default": "mdi:home-floor-1"
+      },
+      "room_temperature": {
+        "default": "mdi:thermometer"
+      }
     },
     "binary_sensor": {
-      "balancing": { "default": "mdi:air-filter", "state": { "on": "mdi:hvac", "off": "mdi:hvac-off" } }
+      "balancing": {
+        "default": "mdi:air-filter",
+        "state": {
+          "on": "mdi:hvac",
+          "off": "mdi:hvac-off"
+        }
+      },
+      "problem": {
+        "default": "mdi:alert-circle-outline",
+        "state": {
+          "off": "mdi:check-circle-outline"
+        }
+      }
     },
     "select": {
-      "mode": { "default": "mdi:home-switch-outline" },
-      "today": { "default": "mdi:calendar-today" }
+      "mode": {
+        "default": "mdi:home-switch-outline"
+      },
+      "today": {
+        "default": "mdi:calendar-today"
+      }
     },
     "switch": {
-      "control": { "default": "mdi:thermostat-auto" }
+      "control": {
+        "default": "mdi:thermostat-auto"
+      }
     },
     "number": {
-      "comfort_cool": { "default": "mdi:snowflake" },
-      "comfort_heat": { "default": "mdi:fire" },
-      "sleep_cool": { "default": "mdi:weather-night" },
-      "sleep_heat": { "default": "mdi:weather-night" },
-      "away_cool": { "default": "mdi:home-export-outline" },
-      "away_heat": { "default": "mdi:home-export-outline" }
+      "comfort_cool": {
+        "default": "mdi:snowflake"
+      },
+      "comfort_heat": {
+        "default": "mdi:fire"
+      },
+      "sleep_cool": {
+        "default": "mdi:weather-night"
+      },
+      "sleep_heat": {
+        "default": "mdi:weather-night"
+      },
+      "away_cool": {
+        "default": "mdi:home-export-outline"
+      },
+      "away_heat": {
+        "default": "mdi:home-export-outline"
+      }
     }
   }
 }

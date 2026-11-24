@@ -74,6 +74,7 @@ _COMMON_DEFAULTS: dict[str, object] = {
     "balance_min_minutes": 10,
     "balance_max_minutes": 45,
     "balance_cooldown_minutes": 15,
+    "sensor_max_age": 240,
 }
 
 _F_DEFAULTS: dict[str, float] = {
@@ -97,6 +98,8 @@ _F_DEFAULTS: dict[str, float] = {
     "balance_spread": 3,
     "balance_safety": 3,
     "balance_setback": 5,
+    "safety_min": 50,
+    "safety_max": 90,
 }
 
 _C_DEFAULTS: dict[str, float] = {
@@ -120,6 +123,8 @@ _C_DEFAULTS: dict[str, float] = {
     "balance_spread": 1.5,
     "balance_safety": 1.5,
     "balance_setback": 3,
+    "safety_min": 10,
+    "safety_max": 32,
 }
 
 

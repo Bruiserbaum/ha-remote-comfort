@@ -150,5 +150,8 @@ class RoomSensor(ZoneEntity, _Temperature):
             "role": self.subentry.data.get(CONF_ROLE),
             "zone": self._zone.title if self._zone else None,
             "hvac_unit": self._zone.data.get(CONF_UNIT) if self._zone else None,
-            "sensors": self.subentry.data.get(CONF_SENSORS, []),
+            "sensors": {
+                entity_id: self.coordinator.sensor_status.get(entity_id, "unknown")
+                for entity_id in self.subentry.data.get(CONF_SENSORS, [])
+            },
         }

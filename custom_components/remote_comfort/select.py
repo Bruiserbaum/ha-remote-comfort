@@ -6,6 +6,7 @@ from homeassistant.components.select import SelectEntity
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.util import dt as dt_util
 
 from . import RemoteComfortConfigEntry
 from .const import DAY_OVERRIDES, SELECTABLE_MODES
@@ -44,13 +45,27 @@ class ModeSelect(RemoteComfortEntity, SelectEntity, RestoreEntity):
         await self.coordinator.async_request_refresh()
 
 
-class DayOverrideSelect(RemoteComfortEntity, SelectEntity):
+class DayOverrideSelect(RemoteComfortEntity, SelectEntity, RestoreEntity):
     """Treat today as a remote/office/off day. Resets to auto at midnight."""
 
     _attr_options = DAY_OVERRIDES
 
     def __init__(self, coordinator: RemoteComfortCoordinator) -> None:
         super().__init__(coordinator, "today")
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last = await self.async_get_last_state()
+        if last is None or last.state not in DAY_OVERRIDES or last.state == "auto":
+            return
+        # Survives a restart, but only on the day it was set.
+        if last.attributes.get("date") == dt_util.now().date().isoformat():
+            self.coordinator.set_day_override(DayType(last.state))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str | None]:
+        day = self.coordinator.day_override_date
+        return {"date": day.isoformat() if day else None}
 
     @property
     def current_option(self) -> str:

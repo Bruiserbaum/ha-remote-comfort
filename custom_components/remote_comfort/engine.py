@@ -68,9 +68,12 @@ ACTIVE_ROLES: dict[Period, set[Role]] = {
 
 
 def _hm(value: str) -> int:
-    """'HH:MM[:SS]' -> minutes after midnight."""
-    parts = value.split(":")
-    return int(parts[0]) * 60 + int(parts[1])
+    """'HH:MM[:SS]' -> minutes after midnight. Raises ValueError if malformed."""
+    parts = str(value).split(":")
+    hours, minutes = int(parts[0]), int(parts[1])
+    if not (0 <= hours < 24 and 0 <= minutes < 60):
+        raise ValueError(f"invalid time {value!r}")
+    return hours * 60 + minutes
 
 
 def _in_window(minute: int, start: int, end: int) -> bool:
@@ -148,6 +151,10 @@ class Prefs:
     # Presence
     presence_sets_away: bool = False
 
+    # Absolute limits for anything sent to a thermostat (freeze/overheat guard).
+    safety_min: float = 50
+    safety_max: float = 90
+
 
 @dataclass(slots=True)
 class Room:
@@ -191,6 +198,9 @@ class Inputs:
     occupied: bool | None = None
     mode: Mode = Mode.AUTO
     day_override: DayType | None = None
+    # All configured zones, including ones whose thermostat is unavailable.
+    # Suppressions for unavailable zones are kept so they can be undone later.
+    configured_zone_ids: set[str] | None = None
 
 
 @dataclass(slots=True)
@@ -236,6 +246,28 @@ class Engine:
     def __init__(self) -> None:
         self.suppressed: dict[str, _Suppression] = {}
         self.cooldown_until: dict[str, datetime] = {}
+
+    def export_state(self) -> dict[str, dict[str, str]]:
+        """Suppressions in a JSON-friendly form (for persistence across restarts)."""
+        return {
+            zone_id: {"since": sup.since.isoformat(), "prev_mode": sup.prev_mode}
+            for zone_id, sup in self.suppressed.items()
+        }
+
+    def import_state(self, data: dict[str, dict[str, str]]) -> None:
+        for zone_id, item in (data or {}).items():
+            try:
+                since = datetime.fromisoformat(item["since"])
+                prev_mode = str(item["prev_mode"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if prev_mode and prev_mode != "off":
+                self.suppressed[zone_id] = _Suppression(since=since, prev_mode=prev_mode)
+
+    def release_zone(self, zone_id: str, now: datetime, cooldown_minutes: int) -> None:
+        """Forget a suppression (e.g. a person turned the zone back on)."""
+        if self.suppressed.pop(zone_id, None) is not None:
+            self.cooldown_until[zone_id] = now + timedelta(minutes=cooldown_minutes)
 
     # ------------------------------------------------------------------ period
     @staticmethod
@@ -449,27 +481,28 @@ class Engine:
             )
             if direction == "cool":
                 dec.target = z_cool
-                dec.temperature = self._fit(zone, z_cool + bias)
+                dec.temperature = self._fit(zone, z_cool + bias, p)
                 if comfort is not None:
                     dec.demand = round(comfort - z_cool, 2)
             elif direction == "heat":
                 dec.target = z_heat
-                dec.temperature = self._fit(zone, z_heat + bias)
+                dec.temperature = self._fit(zone, z_heat + bias, p)
                 if comfort is not None:
                     dec.demand = round(z_heat - comfort, 2)
             elif direction == "dual":
                 # Dual-setpoint thermostats need a gap; the cool side wins.
                 z_heat = min(z_heat, z_cool - p.min_gap)
-                dec.target_low = self._fit(zone, z_heat + bias)
-                dec.target_high = self._fit(zone, z_cool + bias)
+                dec.target_low = self._fit(zone, z_heat + bias, p)
+                dec.target_high = self._fit(zone, z_cool + bias, p)
             else:
                 dec.reason = f"Thermostat is {zone.hvac_mode}; not controlling"
             out[zone.zone_id] = dec
         return out
 
     @staticmethod
-    def _fit(zone: Zone, value: float) -> float:
-        step = zone.step or 1.0
+    def _fit(zone: Zone, value: float, p: Prefs) -> float:
+        step = zone.step if zone.step and zone.step > 0 else 1.0
+        value = min(p.safety_max, max(p.safety_min, value))
         value = round(value / step) * step
         if zone.min_temp is not None:
             value = max(zone.min_temp, value)
@@ -499,10 +532,13 @@ class Engine:
             if dec is not None:
                 dec.reason = f"Released: {why}"
 
-        # Drop suppressions for zones that disappeared.
-        for zone_id in list(self.suppressed):
-            if zone_id not in zones_by_id:
-                self.suppressed.pop(zone_id)
+        # Forget suppressions only for zones removed from the configuration.
+        # A zone whose thermostat is merely unavailable keeps its record so a
+        # zone we switched off gets switched back on when it returns.
+        if inp.configured_zone_ids is not None:
+            for zone_id in list(self.suppressed):
+                if zone_id not in inp.configured_zone_ids:
+                    self.suppressed.pop(zone_id)
 
         allowed = p.balance_enabled and period in OCCUPIED
         groups: dict[str, list[Zone]] = {}
@@ -532,9 +568,14 @@ class Engine:
             lead_demand = leader.demand if leader else None
 
             for dec in decs:
-                if dec is leader or dec.demand is None:
+                if dec is leader:
                     continue
                 sup = self.suppressed.get(dec.zone_id)
+                if dec.demand is None:
+                    # No temperature for this zone: never keep it closed blind.
+                    if sup is not None:
+                        release(dec.zone_id, "lost temperature data")
+                    continue
                 if sup is not None:
                     elapsed = (now - sup.since).total_seconds() / 60
                     if dec.demand >= p.balance_safety:
@@ -544,7 +585,7 @@ class Engine:
                     elif (lead_demand is None or lead_demand <= 0) and elapsed >= p.balance_min_minutes:
                         release(dec.zone_id, "other zones caught up")
                     else:
-                        self._apply_suppression(dec, p, leader)
+                        self._apply_suppression(dec, p, leader, zones_by_id[dec.zone_id])
                     continue
 
                 if now < self.cooldown_until.get(dec.zone_id, now):
@@ -560,15 +601,16 @@ class Engine:
                     continue
                 zone = zones_by_id[dec.zone_id]
                 self.suppressed[dec.zone_id] = _Suppression(since=now, prev_mode=zone.hvac_mode)
-                self._apply_suppression(dec, p, leader)
+                self._apply_suppression(dec, p, leader, zone)
 
             if any(d.suppressed for d in decs) and leader is not None:
                 reasons.append(
                     f"Balancing {unit}: pushing air to {leader.name}"
                 )
 
-    @staticmethod
-    def _apply_suppression(dec: ZoneDecision, p: Prefs, leader: ZoneDecision | None) -> None:
+    def _apply_suppression(
+        self, dec: ZoneDecision, p: Prefs, leader: ZoneDecision | None, zone: Zone
+    ) -> None:
         dec.suppressed = True
         to = f" to favor {leader.name}" if leader else ""
         if p.suppress_method is SuppressMethod.OFF:
@@ -577,7 +619,7 @@ class Engine:
             dec.reason = f"Closed{to} (zone off)"
         else:
             if dec.direction == "cool":
-                dec.temperature = (dec.target or 0) + p.balance_setback
+                dec.temperature = self._fit(zone, (dec.target or 0) + p.balance_setback, p)
             else:
-                dec.temperature = (dec.target or 0) - p.balance_setback
+                dec.temperature = self._fit(zone, (dec.target or 0) - p.balance_setback, p)
             dec.reason = f"Closed{to} (setback)"

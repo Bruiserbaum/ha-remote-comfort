@@ -255,3 +255,65 @@ def test_zones_on_different_units_never_balance():
     zones[1].unit = "Basement unit"
     d = run(Engine(), at(0, 16), zones, rooms)
     assert not d.zones["down"].suppressed
+
+
+# ---------------------------------------------------------------- hardening
+def test_closed_zone_is_released_when_its_temperature_data_disappears():
+    e = Engine()
+    zones, rooms = two_zone_house(up=79, down=73.5)
+    assert run(e, at(0, 16), zones, rooms).zones["down"].suppressed
+    zones, rooms = two_zone_house(up=79, down=73.5)
+    zones[1].thermostat_temp = None
+    rooms[2].temperature = None
+    d = run(e, at(0, 16, 2), zones, rooms)
+    assert not d.zones["down"].suppressed
+    assert "lost temperature data" in d.zones["down"].reason
+
+
+def test_unavailable_zone_keeps_its_suppression_and_is_restored_later():
+    e = Engine()
+    p = Prefs(suppress_method=SuppressMethod.OFF)
+    zones, rooms = two_zone_house(up=79, down=73.5)
+    run(e, at(0, 16), zones, rooms, prefs=p)
+    # Downstairs thermostat drops off the network for a while
+    d = run(e, at(0, 16, 2), zones[:1], rooms, prefs=p, configured_zone_ids={"up", "down"})
+    assert "down" in e.suppressed
+    # It comes back reporting "off" after the max closed time: switched back on
+    zones, rooms = two_zone_house(up=79, down=73.5)
+    zones[1].hvac_mode = "off"
+    d = run(e, at(0, 17), zones, rooms, prefs=p, configured_zone_ids={"up", "down"})
+    assert d.zones["down"].hvac_mode == "cool"
+
+
+def test_removed_zone_suppression_is_forgotten():
+    e = Engine()
+    zones, rooms = two_zone_house(up=79, down=73.5)
+    run(e, at(0, 16), zones, rooms)
+    run(e, at(0, 16, 2), zones[:1], rooms, configured_zone_ids={"up"})
+    assert "down" not in e.suppressed
+
+
+def test_safety_limits_clamp_everything_sent():
+    zones = [Zone("z", "Main", None, "heat", 60, compensate=False)]
+    p = Prefs(away_heat=30, safety_min=50)
+    d = run(Engine(), at(1, 12), zones, [], prefs=p)
+    assert d.zones["z"].temperature == 50
+
+
+def test_setback_respects_thermostat_max():
+    e = Engine()
+    zones, rooms = two_zone_house(up=79, down=73.5)
+    zones[1].max_temp = 76
+    d = run(e, at(0, 16), zones, rooms)
+    assert d.zones["down"].suppressed and d.zones["down"].temperature == 76
+
+
+def test_state_export_import_roundtrip():
+    e = Engine()
+    zones, rooms = two_zone_house(up=79, down=73.5)
+    run(e, at(0, 16), zones, rooms)
+    e2 = Engine()
+    e2.import_state(e.export_state())
+    assert e2.suppressed["down"].prev_mode == "cool"
+    e2.import_state({"bad": {"since": "nope"}, "off": {"since": at(0, 1).isoformat(), "prev_mode": "off"}})
+    assert set(e2.suppressed) == {"down"}
