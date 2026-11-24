@@ -650,7 +650,7 @@ class RemoteComfortCoordinator(DataUpdateCoordinator[Decision]):
                     await self._call("set_hvac_mode", entity_id, hvac_mode=mode)
                 lo, hi = _float(attrs.get(ATTR_MIN_TEMP)), _float(attrs.get(ATTR_MAX_TEMP))
 
-                def fit(value: float) -> float:
+                def fit(value: float, lo: float | None = lo, hi: float | None = hi) -> float:
                     if lo is not None:
                         value = max(lo, value)
                     if hi is not None:
